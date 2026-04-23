@@ -20,19 +20,34 @@ echo "Simple Server + SSH Tunnel Startup"
 echo "Server log: ${SERVER_LOG}"
 echo "Tunnel log: ${TUNNEL_LOG}"
 
+# ── Setup Python Virtual Environment ────────────────────────────────────────
+
+cd "$SCRIPT_DIR"
+
+VENV_DIR="${SCRIPT_DIR}/venv"
+if [ ! -d "$VENV_DIR" ]; then
+    echo "[$(date)] Creating Python virtual environment..."
+    python3 -m venv "$VENV_DIR"
+fi
+
+PYTHON="${VENV_DIR}/bin/python3"
+PIP="${VENV_DIR}/bin/pip"
+
+# Install dependencies if needed
+echo "[$(date)] Checking dependencies..."
+if ! $PYTHON -c "import flask" 2>/dev/null; then
+    echo "[$(date)] Installing dependencies..."
+    $PIP install -q -r requirements.txt
+else
+    echo "[$(date)] Dependencies already installed"
+fi
+
 # ── Start Flask Server ──────────────────────────────────────────────────────
 
 echo "[$(date)] Starting Flask server..."
-cd "$SCRIPT_DIR"
-
-# Install dependencies if needed
-if ! python3 -c "import flask" 2>/dev/null; then
-    echo "Installing dependencies..."
-    pip install -q -r requirements.txt
-fi
 
 # Start server in background
-python3 app.py >> "$SERVER_LOG" 2>&1 &
+$PYTHON app.py >> "$SERVER_LOG" 2>&1 &
 SERVER_PID=$!
 echo "[$(date)] Flask server started (PID: $SERVER_PID)"
 
