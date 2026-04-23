@@ -16,6 +16,7 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 import serial
 import serial.tools.list_ports
@@ -31,9 +32,9 @@ app = Flask(__name__)
 
 # ── Shared state (protected by _lock) ─────────────────────────────────────────
 _lock = threading.Lock()
-_serial_conn: serial.Serial | None = None
-_log_file: io.TextIOWrapper | None = None
-_log_writer: csv.writer | None = None
+_serial_conn: Optional[serial.Serial] = None
+_log_file: Optional[io.TextIOWrapper] = None
+_log_writer: Optional[csv.writer] = None
 _telemetry: dict = {
     "timestamp_us": 0,
     "steer_us": 1500,
@@ -41,7 +42,7 @@ _telemetry: dict = {
     "speed_mps": 0.0,
     "connected": False,
 }
-_serial_thread: threading.Thread | None = None
+_serial_thread: Optional[threading.Thread] = None
 _stop_event = threading.Event()
 
 
