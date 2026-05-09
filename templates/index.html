@@ -117,13 +117,6 @@
     .telem-value.steer { color: #ffaa44; }
     .telem-value.throttle { color: #44ff88; }
 
-    .mono {
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-      font-size: 0.85rem;
-      color: #d8e1ff;
-      word-break: break-word;
-    }
-
     /* Log table */
     .log-table {
       width: 100%;
@@ -250,13 +243,6 @@
         <button id="connect-btn"    class="btn-primary"   onclick="connect()">Connect</button>
         <button id="disconnect-btn" class="btn-danger"    onclick="disconnect()" disabled>Disconnect</button>
       </div>
-      <div class="field-row" style="margin-top:10px">
-        <label>Control mode</label>
-        <select id="control-mode" onchange="setControlMode(this.value)">
-          <option value="mouse">Mouse / Touch joystick</option>
-          <option value="gamepad">Steam Deck gamepad</option>
-        </select>
-      </div>
     </div>
 
     <!-- Telemetry -->
@@ -297,21 +283,6 @@
       </table>
     </div>
 
-    <!-- Serial tx monitor -->
-    <div>
-      <div class="section-title">Serial Tx</div>
-      <div class="telem-card" style="display:flex;flex-direction:column;gap:8px">
-        <div>
-          <div class="telem-label">Last sent command</div>
-          <div class="mono" id="tx-last-cmd">—</div>
-        </div>
-        <div>
-          <div class="telem-label">Sent at</div>
-          <div class="mono" id="tx-last-time">—</div>
-        </div>
-      </div>
-    </div>
-
   </aside>
 
   <!-- ── Joystick ── -->
@@ -349,7 +320,6 @@
 let isConnected = false;
 let joystickActive = false;
 let lastCmdTime = 0;
-let controlMode = 'mouse';
 const CMD_INTERVAL_MS = 100; // max 10 Hz
 
 // ── Utility ────────────────────────────────────────────────────────────────────
@@ -425,25 +395,11 @@ function setConnected(v) {
 // ── Commands ───────────────────────────────────────────────────────────────────
 async function sendCommand(cmd) {
   if (!isConnected) return;
-  const now = new Date();
-  document.getElementById('tx-last-cmd').textContent = cmd;
-  document.getElementById('tx-last-time').textContent = now.toLocaleTimeString();
   await apiFetch('/api/command', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({command: cmd})
   });
-}
-
-function setControlMode(mode) {
-  controlMode = mode === 'gamepad' ? 'gamepad' : 'mouse';
-  const hint = document.querySelector('.joystick-hint');
-  if (controlMode === 'mouse') {
-    hint.innerHTML = 'Touch joystick: Y → throttle &nbsp;|&nbsp; X → steering<br>Steam Deck: disabled in current mode';
-  } else {
-    hint.innerHTML = 'Touch joystick: disabled in current mode<br>Steam Deck: Left stick Y → throttle &nbsp;|&nbsp; Right stick X → steering';
-  }
-  sendNeutral();
 }
 
 async function sendNeutral() {
@@ -464,7 +420,6 @@ const joystick = nipplejs.create({
 });
 
 joystick.on('move', (evt, data) => {
-  if (controlMode !== 'mouse') return;
   joystickActive = true;
   const now = Date.now();
   if (now - lastCmdTime < CMD_INTERVAL_MS) return;
@@ -482,7 +437,6 @@ joystick.on('move', (evt, data) => {
 });
 
 joystick.on('end', () => {
-  if (controlMode !== 'mouse') return;
   joystickActive = false;
   sendNeutral();
 });
@@ -560,11 +514,6 @@ function updateAxisBar(barId, value) {
 }
 
 function pollGamepad() {
-  if (controlMode !== 'gamepad') {
-    requestAnimationFrame(pollGamepad);
-    return;
-  }
-
   if (gpIndex !== null) {
     const gp = navigator.getGamepads()[gpIndex];
     if (gp) {
@@ -611,7 +560,6 @@ requestAnimationFrame(pollGamepad);
 
 // ── Init ───────────────────────────────────────────────────────────────────────
 refreshPorts();
-setControlMode('mouse');
 setInterval(pollTelemetry, 200);
 setInterval(pollLogs, 5000);
 pollLogs();
