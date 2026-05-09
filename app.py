@@ -150,6 +150,7 @@ def _parse_telemetry_line(line: str) -> Optional[dict]:
 
 def _serial_reader():
     """Read lines from serial, parse CSV telemetry, write to log."""
+    global _serial_conn
     logger.info("Serial reader thread started")
     consecutive_errors = 0
     max_consecutive_errors = 10
