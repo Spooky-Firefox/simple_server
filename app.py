@@ -380,6 +380,7 @@ def disconnect():
 
 @app.route("/api/command", methods=["POST"])
 def send_command():
+    global _serial_conn
     data = request.get_json(force=True)
     cmd = data.get("command", "").strip()
     if not cmd:
