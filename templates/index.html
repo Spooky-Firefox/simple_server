@@ -260,6 +260,7 @@
         <select id="control-mode" onchange="setControlMode(this.value)">
           <option value="mouse">Mouse / Touch joystick</option>
           <option value="mouse_fixed_steer">Mouse / Touch throttle + fixed steering</option>
+          <option value="mouse_manual_steer">Mouse / Touch throttle + manual steering text input</option>
           <option value="gamepad">Steam Deck gamepad</option>
         </select>
       </div>
@@ -288,6 +289,21 @@
         </div>
         <div style="font-size:0.72rem;color:#666;">Steering stays at this value while joystick controls throttle.</div>
       </div>
+      <div class="field-row" id="manual-steer-row" style="display:none">
+        <label>Manual steering (PWM us)</label>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <input
+            id="manual-steer-input"
+            type="text"
+            value="1500"
+            oninput="setManualSteer(this.value, false)"
+            onchange="setManualSteer(this.value, true)"
+            style="width:120px"
+          />
+          <button class="btn-secondary" type="button" onclick="applyManualSteerNow()">Apply</button>
+        </div>
+        <div style="font-size:0.72rem;color:#666;">Enter a PWM value (1000-2000). Joystick controls throttle only in this mode.</div>
+      </div>
       <div class="field-row">
         <label>Throttle limit</label>
         <div style="display:flex;align-items:center;gap:8px;">
@@ -314,6 +330,11 @@
         </div>
         <div style="font-size:0.72rem;color:#666;">Limits forward and reverse throttle output.</div>
       </div>
+      <div class="field-row">
+        <label>Distance per non-zero speed line (cm)</label>
+        <input type="text" id="distance-per-line-input" value="1.0" onchange="setDistancePerLine(this.value)" />
+        <div style="font-size:0.72rem;color:#666;">Each telemetry row with speed not equal to 0.00 adds this much distance.</div>
+      </div>
     </div>
 
     <!-- Telemetry -->
@@ -334,6 +355,11 @@
           <div class="telem-label">Throttle</div>
           <div class="telem-value throttle" id="t-throttle">—</div>
           <div style="font-size:0.7rem;color:#555">µs PWM</div>
+        </div>
+        <div class="telem-card">
+          <div class="telem-label">Distance traveled</div>
+          <div class="telem-value" id="t-distance">—</div>
+          <div style="font-size:0.7rem;color:#555">cm</div>
         </div>
         <div class="telem-card">
           <div class="telem-label">Time</div>
@@ -409,6 +435,8 @@ let lastCmdTime = 0;
 let controlMode = 'mouse';
 let throttleLimit = 1.0;
 let fixedSteerUs = 1500;
+let manualSteerUs = 1500;
+let distancePerLineCm = 1.0;
 const CMD_INTERVAL_MS = 100; // max 10 Hz
 
 // ── Utility ────────────────────────────────────────────────────────────────────
@@ -444,8 +472,37 @@ function setFixedSteer(rawUs) {
   document.getElementById('fixed-steer-input').value = String(fixedSteerUs);
 }
 
+function setDistancePerLine(rawValue) {
+  const parsed = parseFloat(rawValue);
+  distancePerLineCm = Number.isFinite(parsed) && parsed >= 0 ? parsed : 1.0;
+  document.getElementById('distance-per-line-input').value = String(distancePerLineCm);
+  apiFetch('/api/settings', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({distance_per_line_cm: distancePerLineCm})
+  });
+}
+
 function isFixedSteerMode() {
   return controlMode === 'mouse_fixed_steer';
+}
+
+function isManualSteerMode() {
+  return controlMode === 'mouse_manual_steer';
+}
+
+function setManualSteer(rawUs, sendNow = false) {
+  const parsed = parseInt(rawUs, 10);
+  manualSteerUs = clamp(Number.isFinite(parsed) ? parsed : 1500, 1000, 2000);
+  document.getElementById('manual-steer-input').value = String(manualSteerUs);
+
+  if (sendNow && isManualSteerMode() && isConnected) {
+    sendCommand(`pwm-a ${manualSteerUs}`);
+  }
+}
+
+function applyManualSteerNow() {
+  setManualSteer(document.getElementById('manual-steer-input').value, true);
 }
 
 async function apiFetch(path, opts) {
@@ -520,6 +577,8 @@ async function sendCommand(cmd) {
 function setControlMode(mode) {
   if (mode === 'gamepad') {
     controlMode = 'gamepad';
+  } else if (mode === 'mouse_manual_steer') {
+    controlMode = 'mouse_manual_steer';
   } else if (mode === 'mouse_fixed_steer') {
     controlMode = 'mouse_fixed_steer';
   } else {
@@ -527,11 +586,14 @@ function setControlMode(mode) {
   }
 
   document.getElementById('fixed-steer-row').style.display = isFixedSteerMode() ? '' : 'none';
+  document.getElementById('manual-steer-row').style.display = isManualSteerMode() ? '' : 'none';
   const hint = document.querySelector('.joystick-hint');
   if (controlMode === 'mouse') {
     hint.innerHTML = 'Touch joystick: Y → throttle &nbsp;|&nbsp; X → steering<br>Steam Deck: disabled in current mode';
   } else if (controlMode === 'mouse_fixed_steer') {
     hint.innerHTML = 'Touch joystick: Y → throttle &nbsp;|&nbsp; X ignored (fixed steering mode)<br>Steam Deck: disabled in current mode';
+  } else if (controlMode === 'mouse_manual_steer') {
+    hint.innerHTML = 'Touch joystick: Y → throttle &nbsp;|&nbsp; X ignored (manual steering text mode)<br>Steam Deck: disabled in current mode';
   } else {
     hint.innerHTML = 'Touch joystick: disabled in current mode<br>Steam Deck: Left stick Y → throttle &nbsp;|&nbsp; Right stick X → steering';
   }
@@ -539,7 +601,7 @@ function setControlMode(mode) {
 }
 
 async function sendNeutral() {
-  const steer = isFixedSteerMode() ? fixedSteerUs : 1500;
+  const steer = isFixedSteerMode() ? fixedSteerUs : (isManualSteerMode() ? manualSteerUs : 1500);
   await sendCommand(`pwm-a ${steer}`);
   await sendCommand('pwm-b 1500');
 }
@@ -557,7 +619,7 @@ const joystick = nipplejs.create({
 });
 
 joystick.on('move', (evt, data) => {
-  if (controlMode !== 'mouse' && controlMode !== 'mouse_fixed_steer') return;
+  if (controlMode !== 'mouse' && controlMode !== 'mouse_fixed_steer' && controlMode !== 'mouse_manual_steer') return;
   joystickActive = true;
   const now = Date.now();
   if (now - lastCmdTime < CMD_INTERVAL_MS) return;
@@ -567,7 +629,9 @@ joystick.on('move', (evt, data) => {
   const x = clamp(data.vector?.x ?? 0, -1, 1); // right = positive
   const y = clamp(data.vector?.y ?? 0, -1, 1); // up = positive
 
-  const steer_us   = isFixedSteerMode() ? fixedSteerUs : axisToPwm(x); // right = 2000, left = 1000
+  const steer_us = isFixedSteerMode()
+    ? fixedSteerUs
+    : (isManualSteerMode() ? manualSteerUs : axisToPwm(x)); // right = 2000, left = 1000
   const throttle_us = axisToPwm(applyThrottleLimit(y)); // forward = 2000, reverse = 1000
 
   sendCommand(`pwm-a ${steer_us}`);
@@ -575,7 +639,7 @@ joystick.on('move', (evt, data) => {
 });
 
 joystick.on('end', () => {
-  if (controlMode !== 'mouse' && controlMode !== 'mouse_fixed_steer') return;
+  if (controlMode !== 'mouse' && controlMode !== 'mouse_fixed_steer' && controlMode !== 'mouse_manual_steer') return;
   joystickActive = false;
   sendNeutral();
 });
@@ -587,6 +651,7 @@ async function pollTelemetry() {
   document.getElementById('t-speed').textContent    = d.speed_mps.toFixed(3);
   document.getElementById('t-steer').textContent    = d.steer_us;
   document.getElementById('t-throttle').textContent = d.throttle_us;
+  document.getElementById('t-distance').textContent  = d.distance_cm.toFixed(1);
   document.getElementById('t-time').textContent     = d.timestamp_us;
   if (d.connected !== isConnected) setConnected(d.connected);
 }
@@ -707,6 +772,8 @@ refreshPorts();
 setControlMode('mouse');
 setThrottleLimit(100);
 setFixedSteer(1500);
+setManualSteer(1500, false);
+setDistancePerLine(1.0);
 setInterval(pollTelemetry, 200);
 setInterval(pollLogs, 5000);
 pollLogs();
