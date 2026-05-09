@@ -332,10 +332,6 @@ function axisToPwm(v) {
   return lerp((v + 1) / 2, 1000, 2000);
 }
 
-function clamp(v, lo, hi) {
-  return Math.max(lo, Math.min(hi, v));
-}
-
 async function apiFetch(path, opts) {
   try {
     const r = await fetch(path, opts);
@@ -411,9 +407,7 @@ async function sendNeutral() {
 const joystick = nipplejs.create({
   zone: document.getElementById('joystick-zone'),
   mode: 'static',
-  // Keep the resting position pinned to the visual center of a 300x300 zone.
-  position: {left: '150px', top: '150px'},
-  dynamicPage: true,
+  position: {left: '50%', top: '50%'},
   color: '#4a6cf7',
   size: 120,
   restOpacity: 0.7,
@@ -425,9 +419,11 @@ joystick.on('move', (evt, data) => {
   if (now - lastCmdTime < CMD_INTERVAL_MS) return;
   lastCmdTime = now;
 
-  // Prefer direct vector values to avoid angle/force drift.
-  const x = clamp(data.vector?.x ?? 0, -1, 1); // right = positive
-  const y = clamp(data.vector?.y ?? 0, -1, 1); // up = positive
+  // nipplejs vector: angle from east, converted to x/y in [-1, 1]
+  const force = Math.min(data.force, 1.0);
+  const angle = data.angle.radian; // east = 0, CCW positive
+  const x =  Math.cos(angle) * force; // right = positive
+  const y =  Math.sin(angle) * force; // up = positive (nipplejs)
 
   const steer_us   = axisToPwm(x);      // right = 2000, left = 1000
   const throttle_us = axisToPwm(y);     // forward = 2000, reverse = 1000
@@ -517,17 +513,8 @@ function pollGamepad() {
   if (gpIndex !== null) {
     const gp = navigator.getGamepads()[gpIndex];
     if (gp) {
-      // Let touch joystick win while user is actively dragging it.
-      if (joystickActive) {
-        requestAnimationFrame(pollGamepad);
-        return;
-      }
-
       const throttleRaw = applyDeadzone(-( gp.axes[1] ?? 0)); // negate: up=forward
-      // Steam Deck layouts can expose steering on axis 2 or axis 0.
-      const steerA = applyDeadzone(gp.axes[2] ?? 0);
-      const steerB = applyDeadzone(gp.axes[0] ?? 0);
-      const steerRaw = Math.abs(steerA) >= Math.abs(steerB) ? steerA : steerB;
+      const steerRaw    = applyDeadzone(   gp.axes[2] ?? 0);
 
       updateAxisBar('gp-throttle-bar', throttleRaw);
       updateAxisBar('gp-steer-bar', steerRaw);
@@ -543,20 +530,6 @@ function pollGamepad() {
   requestAnimationFrame(pollGamepad);
 }
 requestAnimationFrame(pollGamepad);
-
-// Handle controllers that were already connected before page load.
-{
-  const pads = navigator.getGamepads ? navigator.getGamepads() : [];
-  for (const gp of pads) {
-    if (gp) {
-      gpIndex = gp.index;
-      document.getElementById('gp-dot').classList.add('active');
-      document.getElementById('gp-label').textContent = 'Gamepad: ' + gp.id.slice(0, 60);
-      document.getElementById('gp-axes').style.display = 'flex';
-      break;
-    }
-  }
-}
 
 // ── Init ───────────────────────────────────────────────────────────────────────
 refreshPorts();
