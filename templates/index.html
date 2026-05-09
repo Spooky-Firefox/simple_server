@@ -81,6 +81,11 @@
       width: 100%;
     }
 
+    input[type="range"] {
+      width: 100%;
+      accent-color: #4a6cf7;
+    }
+
     .btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
 
     button {
@@ -254,8 +259,60 @@
         <label>Control mode</label>
         <select id="control-mode" onchange="setControlMode(this.value)">
           <option value="mouse">Mouse / Touch joystick</option>
+          <option value="mouse_fixed_steer">Mouse / Touch throttle + fixed steering</option>
           <option value="gamepad">Steam Deck gamepad</option>
         </select>
+      </div>
+      <div class="field-row" id="fixed-steer-row" style="display:none">
+        <label>Fixed steering (PWM µs)</label>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <input
+            id="fixed-steer-slider"
+            type="range"
+            min="1000"
+            max="2000"
+            step="1"
+            value="1500"
+            oninput="setFixedSteer(this.value)"
+          />
+          <input
+            id="fixed-steer-input"
+            type="number"
+            min="1000"
+            max="2000"
+            step="1"
+            value="1500"
+            oninput="setFixedSteer(this.value)"
+            style="width:92px"
+          />
+        </div>
+        <div style="font-size:0.72rem;color:#666;">Steering stays at this value while joystick controls throttle.</div>
+      </div>
+      <div class="field-row">
+        <label>Throttle limit</label>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <input
+            id="throttle-limit-slider"
+            type="range"
+            min="0"
+            max="100"
+            step="1"
+            value="100"
+            oninput="setThrottleLimit(this.value)"
+          />
+          <input
+            id="throttle-limit-input"
+            type="number"
+            min="0"
+            max="100"
+            step="1"
+            value="100"
+            oninput="setThrottleLimit(this.value)"
+            style="width:74px"
+          />
+          <span style="font-size:0.8rem;color:#888;">%</span>
+        </div>
+        <div style="font-size:0.72rem;color:#666;">Limits forward and reverse throttle output.</div>
       </div>
     </div>
 
@@ -350,6 +407,8 @@ let isConnected = false;
 let joystickActive = false;
 let lastCmdTime = 0;
 let controlMode = 'mouse';
+let throttleLimit = 1.0;
+let fixedSteerUs = 1500;
 const CMD_INTERVAL_MS = 100; // max 10 Hz
 
 // ── Utility ────────────────────────────────────────────────────────────────────
@@ -364,6 +423,29 @@ function axisToPwm(v) {
 
 function clamp(v, lo, hi) {
   return Math.max(lo, Math.min(hi, v));
+}
+
+function setThrottleLimit(rawPercent) {
+  const parsed = parseInt(rawPercent, 10);
+  const percent = clamp(Number.isFinite(parsed) ? parsed : 100, 0, 100);
+  throttleLimit = percent / 100;
+  document.getElementById('throttle-limit-slider').value = String(percent);
+  document.getElementById('throttle-limit-input').value = String(percent);
+}
+
+function applyThrottleLimit(axisValue) {
+  return clamp(axisValue, -1, 1) * throttleLimit;
+}
+
+function setFixedSteer(rawUs) {
+  const parsed = parseInt(rawUs, 10);
+  fixedSteerUs = clamp(Number.isFinite(parsed) ? parsed : 1500, 1000, 2000);
+  document.getElementById('fixed-steer-slider').value = String(fixedSteerUs);
+  document.getElementById('fixed-steer-input').value = String(fixedSteerUs);
+}
+
+function isFixedSteerMode() {
+  return controlMode === 'mouse_fixed_steer';
 }
 
 async function apiFetch(path, opts) {
@@ -436,10 +518,20 @@ async function sendCommand(cmd) {
 }
 
 function setControlMode(mode) {
-  controlMode = mode === 'gamepad' ? 'gamepad' : 'mouse';
+  if (mode === 'gamepad') {
+    controlMode = 'gamepad';
+  } else if (mode === 'mouse_fixed_steer') {
+    controlMode = 'mouse_fixed_steer';
+  } else {
+    controlMode = 'mouse';
+  }
+
+  document.getElementById('fixed-steer-row').style.display = isFixedSteerMode() ? '' : 'none';
   const hint = document.querySelector('.joystick-hint');
   if (controlMode === 'mouse') {
     hint.innerHTML = 'Touch joystick: Y → throttle &nbsp;|&nbsp; X → steering<br>Steam Deck: disabled in current mode';
+  } else if (controlMode === 'mouse_fixed_steer') {
+    hint.innerHTML = 'Touch joystick: Y → throttle &nbsp;|&nbsp; X ignored (fixed steering mode)<br>Steam Deck: disabled in current mode';
   } else {
     hint.innerHTML = 'Touch joystick: disabled in current mode<br>Steam Deck: Left stick Y → throttle &nbsp;|&nbsp; Right stick X → steering';
   }
@@ -447,7 +539,8 @@ function setControlMode(mode) {
 }
 
 async function sendNeutral() {
-  await sendCommand('pwm-a 1500');
+  const steer = isFixedSteerMode() ? fixedSteerUs : 1500;
+  await sendCommand(`pwm-a ${steer}`);
   await sendCommand('pwm-b 1500');
 }
 
@@ -464,7 +557,7 @@ const joystick = nipplejs.create({
 });
 
 joystick.on('move', (evt, data) => {
-  if (controlMode !== 'mouse') return;
+  if (controlMode !== 'mouse' && controlMode !== 'mouse_fixed_steer') return;
   joystickActive = true;
   const now = Date.now();
   if (now - lastCmdTime < CMD_INTERVAL_MS) return;
@@ -474,15 +567,15 @@ joystick.on('move', (evt, data) => {
   const x = clamp(data.vector?.x ?? 0, -1, 1); // right = positive
   const y = clamp(data.vector?.y ?? 0, -1, 1); // up = positive
 
-  const steer_us   = axisToPwm(x);      // right = 2000, left = 1000
-  const throttle_us = axisToPwm(y);     // forward = 2000, reverse = 1000
+  const steer_us   = isFixedSteerMode() ? fixedSteerUs : axisToPwm(x); // right = 2000, left = 1000
+  const throttle_us = axisToPwm(applyThrottleLimit(y)); // forward = 2000, reverse = 1000
 
   sendCommand(`pwm-a ${steer_us}`);
   sendCommand(`pwm-b ${throttle_us}`);
 });
 
 joystick.on('end', () => {
-  if (controlMode !== 'mouse') return;
+  if (controlMode !== 'mouse' && controlMode !== 'mouse_fixed_steer') return;
   joystickActive = false;
   sendNeutral();
 });
@@ -586,7 +679,7 @@ function pollGamepad() {
       const now = Date.now();
       if (isConnected && now - gpLastCmdTime >= GP_INTERVAL_MS) {
         gpLastCmdTime = now;
-        sendCommand('pwm-b ' + axisToPwm(throttleRaw)); // throttle
+        sendCommand('pwm-b ' + axisToPwm(applyThrottleLimit(throttleRaw))); // throttle
         sendCommand('pwm-a ' + axisToPwm(steerRaw));    // steering
       }
     }
@@ -612,6 +705,8 @@ requestAnimationFrame(pollGamepad);
 // ── Init ───────────────────────────────────────────────────────────────────────
 refreshPorts();
 setControlMode('mouse');
+setThrottleLimit(100);
+setFixedSteer(1500);
 setInterval(pollTelemetry, 200);
 setInterval(pollLogs, 5000);
 pollLogs();
