@@ -117,6 +117,13 @@
     .telem-value.steer { color: #ffaa44; }
     .telem-value.throttle { color: #44ff88; }
 
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.85rem;
+      color: #d8e1ff;
+      word-break: break-word;
+    }
+
     /* Log table */
     .log-table {
       width: 100%;
@@ -175,6 +182,40 @@
     .axis-label.right  { right: 10px; top: 50%; transform: translateY(-50%); }
 
     .neutral-btn { margin-top: 14px; }
+
+    /* Gamepad status bar */
+    .gamepad-bar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: #1a1d27;
+      border-top: 1px solid #2e3144;
+      padding: 8px 24px;
+      font-size: 0.8rem;
+      color: #888;
+      flex-wrap: wrap;
+    }
+    .gamepad-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: #555;
+      flex-shrink: 0;
+    }
+    .gamepad-dot.active { background: #44ff88; }
+    .axis-bar-wrap { display: flex; align-items: center; gap: 6px; }
+    .axis-bar-bg {
+      width: 80px; height: 8px;
+      background: #2e3144;
+      border-radius: 4px;
+      overflow: hidden;
+      position: relative;
+    }
+    .axis-bar-fill {
+      position: absolute;
+      height: 100%;
+      background: #4a6cf7;
+      border-radius: 4px;
+    }
   </style>
 </head>
 <body>
@@ -208,6 +249,13 @@
       <div class="btn-row">
         <button id="connect-btn"    class="btn-primary"   onclick="connect()">Connect</button>
         <button id="disconnect-btn" class="btn-danger"    onclick="disconnect()" disabled>Disconnect</button>
+      </div>
+      <div class="field-row" style="margin-top:10px">
+        <label>Control mode</label>
+        <select id="control-mode" onchange="setControlMode(this.value)">
+          <option value="mouse">Mouse / Touch joystick</option>
+          <option value="gamepad">Steam Deck gamepad</option>
+        </select>
       </div>
     </div>
 
@@ -249,6 +297,21 @@
       </table>
     </div>
 
+    <!-- Serial tx monitor -->
+    <div>
+      <div class="section-title">Serial Tx</div>
+      <div class="telem-card" style="display:flex;flex-direction:column;gap:8px">
+        <div>
+          <div class="telem-label">Last sent command</div>
+          <div class="mono" id="tx-last-cmd">—</div>
+        </div>
+        <div>
+          <div class="telem-label">Sent at</div>
+          <div class="mono" id="tx-last-time">—</div>
+        </div>
+      </div>
+    </div>
+
   </aside>
 
   <!-- ── Joystick ── -->
@@ -262,10 +325,22 @@
       </div>
     </div>
     <div class="joystick-hint">
-      Y axis → throttle &nbsp;|&nbsp; X axis → steering<br>
-      Release to center (neutral 1500 µs)
+      Touch joystick: Y → throttle &nbsp;|&nbsp; X → steering<br>
+      Steam Deck: Left stick Y → throttle &nbsp;|&nbsp; Right stick X → steering
     </div>
     <button class="btn-secondary neutral-btn" onclick="sendNeutral()">Send Neutral</button>
+  </div>
+</div>
+
+<!-- Gamepad status bar -->
+<div class="gamepad-bar">
+  <div id="gp-dot" class="gamepad-dot"></div>
+  <span id="gp-label">No gamepad detected — connect Steam Deck controller</span>
+  <div class="axis-bar-wrap" id="gp-axes" style="display:none">
+    <span>Throttle</span>
+    <div class="axis-bar-bg"><div id="gp-throttle-bar" class="axis-bar-fill" style="left:50%;width:0"></div></div>
+    <span style="margin-left:12px">Steer</span>
+    <div class="axis-bar-bg"><div id="gp-steer-bar" class="axis-bar-fill" style="left:50%;width:0"></div></div>
   </div>
 </div>
 
@@ -274,6 +349,7 @@
 let isConnected = false;
 let joystickActive = false;
 let lastCmdTime = 0;
+let controlMode = 'mouse';
 const CMD_INTERVAL_MS = 100; // max 10 Hz
 
 // ── Utility ────────────────────────────────────────────────────────────────────
@@ -284,6 +360,10 @@ function lerp(t, lo, hi) {
 // Map joystick [-1..1] → PWM [1000..2000]
 function axisToPwm(v) {
   return lerp((v + 1) / 2, 1000, 2000);
+}
+
+function clamp(v, lo, hi) {
+  return Math.max(lo, Math.min(hi, v));
 }
 
 async function apiFetch(path, opts) {
@@ -345,11 +425,25 @@ function setConnected(v) {
 // ── Commands ───────────────────────────────────────────────────────────────────
 async function sendCommand(cmd) {
   if (!isConnected) return;
+  const now = new Date();
+  document.getElementById('tx-last-cmd').textContent = cmd;
+  document.getElementById('tx-last-time').textContent = now.toLocaleTimeString();
   await apiFetch('/api/command', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({command: cmd})
   });
+}
+
+function setControlMode(mode) {
+  controlMode = mode === 'gamepad' ? 'gamepad' : 'mouse';
+  const hint = document.querySelector('.joystick-hint');
+  if (controlMode === 'mouse') {
+    hint.innerHTML = 'Touch joystick: Y → throttle &nbsp;|&nbsp; X → steering<br>Steam Deck: disabled in current mode';
+  } else {
+    hint.innerHTML = 'Touch joystick: disabled in current mode<br>Steam Deck: Left stick Y → throttle &nbsp;|&nbsp; Right stick X → steering';
+  }
+  sendNeutral();
 }
 
 async function sendNeutral() {
@@ -361,23 +455,24 @@ async function sendNeutral() {
 const joystick = nipplejs.create({
   zone: document.getElementById('joystick-zone'),
   mode: 'static',
-  position: {left: '50%', top: '50%'},
+  // Keep the resting position pinned to the visual center of a 300x300 zone.
+  position: {left: '150px', top: '150px'},
+  dynamicPage: true,
   color: '#4a6cf7',
   size: 120,
   restOpacity: 0.7,
 });
 
 joystick.on('move', (evt, data) => {
+  if (controlMode !== 'mouse') return;
   joystickActive = true;
   const now = Date.now();
   if (now - lastCmdTime < CMD_INTERVAL_MS) return;
   lastCmdTime = now;
 
-  // nipplejs vector: angle from east, converted to x/y in [-1, 1]
-  const force = Math.min(data.force, 1.0);
-  const angle = data.angle.radian; // east = 0, CCW positive
-  const x =  Math.cos(angle) * force; // right = positive
-  const y =  Math.sin(angle) * force; // up = positive (nipplejs)
+  // Prefer direct vector values to avoid angle/force drift.
+  const x = clamp(data.vector?.x ?? 0, -1, 1); // right = positive
+  const y = clamp(data.vector?.y ?? 0, -1, 1); // up = positive
 
   const steer_us   = axisToPwm(x);      // right = 2000, left = 1000
   const throttle_us = axisToPwm(y);     // forward = 2000, reverse = 1000
@@ -387,6 +482,7 @@ joystick.on('move', (evt, data) => {
 });
 
 joystick.on('end', () => {
+  if (controlMode !== 'mouse') return;
   joystickActive = false;
   sendNeutral();
 });
@@ -420,8 +516,102 @@ async function pollLogs() {
   }).join('');
 }
 
+// ── Gamepad (Steam Deck) ──────────────────────────────────────────────────────
+// Left stick Y  (axes[1], up = -1, negate → forward = positive) → throttle
+// Right stick X (axes[2]) → steering
+let gpIndex = null;
+let gpLastCmdTime = 0;
+const GP_DEADZONE = 0.08;
+const GP_INTERVAL_MS = 50; // 20 Hz
+
+window.addEventListener('gamepadconnected', (e) => {
+  gpIndex = e.gamepad.index;
+  document.getElementById('gp-dot').classList.add('active');
+  document.getElementById('gp-label').textContent =
+    'Gamepad: ' + e.gamepad.id.slice(0, 60);
+  document.getElementById('gp-axes').style.display = 'flex';
+});
+
+window.addEventListener('gamepaddisconnected', (e) => {
+  if (e.gamepad.index === gpIndex) {
+    gpIndex = null;
+    document.getElementById('gp-dot').classList.remove('active');
+    document.getElementById('gp-label').textContent =
+      'No gamepad detected — connect Steam Deck controller';
+    document.getElementById('gp-axes').style.display = 'none';
+    if (isConnected) sendNeutral();
+  }
+});
+
+function applyDeadzone(v) {
+  return Math.abs(v) < GP_DEADZONE ? 0 : v;
+}
+
+function updateAxisBar(barId, value) {
+  const bar = document.getElementById(barId);
+  const half = Math.abs(value) * 50;
+  if (value >= 0) {
+    bar.style.left = '50%';
+    bar.style.width = half + '%';
+  } else {
+    bar.style.left = (50 - half) + '%';
+    bar.style.width = half + '%';
+  }
+}
+
+function pollGamepad() {
+  if (controlMode !== 'gamepad') {
+    requestAnimationFrame(pollGamepad);
+    return;
+  }
+
+  if (gpIndex !== null) {
+    const gp = navigator.getGamepads()[gpIndex];
+    if (gp) {
+      // Let touch joystick win while user is actively dragging it.
+      if (joystickActive) {
+        requestAnimationFrame(pollGamepad);
+        return;
+      }
+
+      const throttleRaw = applyDeadzone(-( gp.axes[1] ?? 0)); // negate: up=forward
+      // Steam Deck layouts can expose steering on axis 2 or axis 0.
+      const steerA = applyDeadzone(gp.axes[2] ?? 0);
+      const steerB = applyDeadzone(gp.axes[0] ?? 0);
+      const steerRaw = Math.abs(steerA) >= Math.abs(steerB) ? steerA : steerB;
+
+      updateAxisBar('gp-throttle-bar', throttleRaw);
+      updateAxisBar('gp-steer-bar', steerRaw);
+
+      const now = Date.now();
+      if (isConnected && now - gpLastCmdTime >= GP_INTERVAL_MS) {
+        gpLastCmdTime = now;
+        sendCommand('pwm-b ' + axisToPwm(throttleRaw)); // throttle
+        sendCommand('pwm-a ' + axisToPwm(steerRaw));    // steering
+      }
+    }
+  }
+  requestAnimationFrame(pollGamepad);
+}
+requestAnimationFrame(pollGamepad);
+
+// Handle controllers that were already connected before page load.
+{
+  const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+  for (const gp of pads) {
+    if (gp) {
+      gpIndex = gp.index;
+      document.getElementById('gp-dot').classList.add('active');
+      document.getElementById('gp-label').textContent = 'Gamepad: ' + gp.id.slice(0, 60);
+      document.getElementById('gp-axes').style.display = 'flex';
+      break;
+    }
+  }
+}
+
 // ── Init ───────────────────────────────────────────────────────────────────────
 refreshPorts();
+setControlMode('mouse');
 setInterval(pollTelemetry, 200);
 setInterval(pollLogs, 5000);
 pollLogs();
