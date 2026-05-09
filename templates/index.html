@@ -175,40 +175,6 @@
     .axis-label.right  { right: 10px; top: 50%; transform: translateY(-50%); }
 
     .neutral-btn { margin-top: 14px; }
-
-    /* Gamepad status bar */
-    .gamepad-bar {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      background: #1a1d27;
-      border-top: 1px solid #2e3144;
-      padding: 8px 24px;
-      font-size: 0.8rem;
-      color: #888;
-      flex-wrap: wrap;
-    }
-    .gamepad-dot {
-      width: 8px; height: 8px;
-      border-radius: 50%;
-      background: #555;
-      flex-shrink: 0;
-    }
-    .gamepad-dot.active { background: #44ff88; }
-    .axis-bar-wrap { display: flex; align-items: center; gap: 6px; }
-    .axis-bar-bg {
-      width: 80px; height: 8px;
-      background: #2e3144;
-      border-radius: 4px;
-      overflow: hidden;
-      position: relative;
-    }
-    .axis-bar-fill {
-      position: absolute;
-      height: 100%;
-      background: #4a6cf7;
-      border-radius: 4px;
-    }
   </style>
 </head>
 <body>
@@ -296,22 +262,10 @@
       </div>
     </div>
     <div class="joystick-hint">
-      Touch joystick: Y → throttle &nbsp;|&nbsp; X → steering<br>
-      Steam Deck: Left stick Y → throttle &nbsp;|&nbsp; Right stick X → steering
+      Y axis → throttle &nbsp;|&nbsp; X axis → steering<br>
+      Release to center (neutral 1500 µs)
     </div>
     <button class="btn-secondary neutral-btn" onclick="sendNeutral()">Send Neutral</button>
-  </div>
-</div>
-
-<!-- Gamepad status bar -->
-<div class="gamepad-bar">
-  <div id="gp-dot" class="gamepad-dot"></div>
-  <span id="gp-label">No gamepad detected — connect Steam Deck controller</span>
-  <div class="axis-bar-wrap" id="gp-axes" style="display:none">
-    <span>Throttle</span>
-    <div class="axis-bar-bg"><div id="gp-throttle-bar" class="axis-bar-fill" style="left:50%;width:0"></div></div>
-    <span style="margin-left:12px">Steer</span>
-    <div class="axis-bar-bg"><div id="gp-steer-bar" class="axis-bar-fill" style="left:50%;width:0"></div></div>
   </div>
 </div>
 
@@ -465,71 +419,6 @@ async function pollLogs() {
     </tr>`;
   }).join('');
 }
-
-// ── Gamepad (Steam Deck) ──────────────────────────────────────────────────────
-// Left stick Y  (axes[1], up = -1, negate → forward = positive) → throttle
-// Right stick X (axes[2]) → steering
-let gpIndex = null;
-let gpLastCmdTime = 0;
-const GP_DEADZONE = 0.08;
-const GP_INTERVAL_MS = 50; // 20 Hz
-
-window.addEventListener('gamepadconnected', (e) => {
-  gpIndex = e.gamepad.index;
-  document.getElementById('gp-dot').classList.add('active');
-  document.getElementById('gp-label').textContent =
-    'Gamepad: ' + e.gamepad.id.slice(0, 60);
-  document.getElementById('gp-axes').style.display = 'flex';
-});
-
-window.addEventListener('gamepaddisconnected', (e) => {
-  if (e.gamepad.index === gpIndex) {
-    gpIndex = null;
-    document.getElementById('gp-dot').classList.remove('active');
-    document.getElementById('gp-label').textContent =
-      'No gamepad detected — connect Steam Deck controller';
-    document.getElementById('gp-axes').style.display = 'none';
-    if (isConnected) sendNeutral();
-  }
-});
-
-function applyDeadzone(v) {
-  return Math.abs(v) < GP_DEADZONE ? 0 : v;
-}
-
-function updateAxisBar(barId, value) {
-  const bar = document.getElementById(barId);
-  const half = Math.abs(value) * 50;
-  if (value >= 0) {
-    bar.style.left = '50%';
-    bar.style.width = half + '%';
-  } else {
-    bar.style.left = (50 - half) + '%';
-    bar.style.width = half + '%';
-  }
-}
-
-function pollGamepad() {
-  if (gpIndex !== null) {
-    const gp = navigator.getGamepads()[gpIndex];
-    if (gp) {
-      const throttleRaw = applyDeadzone(-( gp.axes[1] ?? 0)); // negate: up=forward
-      const steerRaw    = applyDeadzone(   gp.axes[2] ?? 0);
-
-      updateAxisBar('gp-throttle-bar', throttleRaw);
-      updateAxisBar('gp-steer-bar', steerRaw);
-
-      const now = Date.now();
-      if (isConnected && now - gpLastCmdTime >= GP_INTERVAL_MS) {
-        gpLastCmdTime = now;
-        sendCommand('pwm-b ' + axisToPwm(throttleRaw)); // throttle
-        sendCommand('pwm-a ' + axisToPwm(steerRaw));    // steering
-      }
-    }
-  }
-  requestAnimationFrame(pollGamepad);
-}
-requestAnimationFrame(pollGamepad);
 
 // ── Init ───────────────────────────────────────────────────────────────────────
 refreshPorts();
