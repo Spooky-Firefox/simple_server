@@ -314,11 +314,6 @@
         </div>
         <div style="font-size:0.72rem;color:#666;">Limits forward and reverse throttle output.</div>
       </div>
-      <div class="field-row">
-        <label>Distance per non-zero speed line (cm)</label>
-        <input type="text" id="distance-per-line-input" value="1.0" onchange="setDistancePerLine(this.value)" />
-        <div style="font-size:0.72rem;color:#666;">Each telemetry row with speed not equal to 0.00 adds this much distance.</div>
-      </div>
     </div>
 
     <!-- Telemetry -->
@@ -339,11 +334,6 @@
           <div class="telem-label">Throttle</div>
           <div class="telem-value throttle" id="t-throttle">—</div>
           <div style="font-size:0.7rem;color:#555">µs PWM</div>
-        </div>
-        <div class="telem-card">
-          <div class="telem-label">Distance traveled</div>
-          <div class="telem-value" id="t-distance">—</div>
-          <div style="font-size:0.7rem;color:#555">cm</div>
         </div>
         <div class="telem-card">
           <div class="telem-label">Time</div>
@@ -419,7 +409,6 @@ let lastCmdTime = 0;
 let controlMode = 'mouse';
 let throttleLimit = 1.0;
 let fixedSteerUs = 1500;
-let distancePerLineCm = 1.0;
 const CMD_INTERVAL_MS = 100; // max 10 Hz
 
 // ── Utility ────────────────────────────────────────────────────────────────────
@@ -453,17 +442,6 @@ function setFixedSteer(rawUs) {
   fixedSteerUs = clamp(Number.isFinite(parsed) ? parsed : 1500, 1000, 2000);
   document.getElementById('fixed-steer-slider').value = String(fixedSteerUs);
   document.getElementById('fixed-steer-input').value = String(fixedSteerUs);
-}
-
-function setDistancePerLine(rawValue) {
-  const parsed = parseFloat(rawValue);
-  distancePerLineCm = Number.isFinite(parsed) && parsed >= 0 ? parsed : 1.0;
-  document.getElementById('distance-per-line-input').value = String(distancePerLineCm);
-  apiFetch('/api/settings', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({distance_per_line_cm: distancePerLineCm})
-  });
 }
 
 function isFixedSteerMode() {
@@ -609,7 +587,6 @@ async function pollTelemetry() {
   document.getElementById('t-speed').textContent    = d.speed_mps.toFixed(3);
   document.getElementById('t-steer').textContent    = d.steer_us;
   document.getElementById('t-throttle').textContent = d.throttle_us;
-  document.getElementById('t-distance').textContent  = d.distance_cm.toFixed(1);
   document.getElementById('t-time').textContent     = d.timestamp_us;
   if (d.connected !== isConnected) setConnected(d.connected);
 }
@@ -730,7 +707,6 @@ refreshPorts();
 setControlMode('mouse');
 setThrottleLimit(100);
 setFixedSteer(1500);
-setDistancePerLine(1.0);
 setInterval(pollTelemetry, 200);
 setInterval(pollLogs, 5000);
 pollLogs();
