@@ -61,6 +61,8 @@ _telemetry: dict = {
     "steer_us": 1500,
     "throttle_us": 1500,
     "speed_mps": 0.0,
+    "distance_cm": 0.0,
+    "distance_per_line_cm": 1.0,
     "connected": False,
     "last_update_us": 0,
     "parse_errors": 0,
@@ -226,6 +228,11 @@ def _serial_reader():
             with _lock:
                 _telemetry.update(parsed)
                 _telemetry["last_update_us"] = parsed.get("timestamp_us", 0)
+
+                speed_mps = parsed.get("speed_mps", 0.0)
+                distance_per_line_cm = float(_telemetry.get("distance_per_line_cm", 1.0))
+                if speed_mps != 0.0:
+                    _telemetry["distance_cm"] = _telemetry.get("distance_cm", 0.0) + distance_per_line_cm
                 
                 if _log_writer is not None and _log_file is not None:
                     row = [
@@ -314,6 +321,7 @@ def connect():
         _serial_conn = conn
         _log_file = lf
         _log_writer = writer
+        _telemetry["distance_cm"] = 0.0
         _telemetry["connected"] = True
         _telemetry["parse_errors"] = 0
         _telemetry["serial_errors"] = 0
@@ -410,6 +418,23 @@ def send_command():
     except Exception as e:
         logger.error(f"Unexpected error sending command: {e}", exc_info=True)
         return jsonify({"error": "Unexpected error"}), 500
+
+
+@app.route("/api/settings", methods=["POST"])
+def update_settings():
+    data = request.get_json(force=True)
+    try:
+        distance_per_line_cm = float(data.get("distance_per_line_cm", 1.0))
+    except (TypeError, ValueError):
+        return jsonify({"error": "distance_per_line_cm must be a number"}), 400
+
+    if distance_per_line_cm < 0:
+        return jsonify({"error": "distance_per_line_cm must be non-negative"}), 400
+
+    with _lock:
+        _telemetry["distance_per_line_cm"] = distance_per_line_cm
+
+    return jsonify({"ok": True, "distance_per_line_cm": distance_per_line_cm})
 
 
 
